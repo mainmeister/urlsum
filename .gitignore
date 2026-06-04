@@ -10,5 +10,6 @@ env.bak/
 venv.bak/
 .idea/
 .vscode/
+.junie/
 *.swp
 *.swo
