@@ -24,7 +24,7 @@ AI-driven 450-character hard limit summary of the contents of a URL.
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/urlsum.git
+   git clone https://github.com/mainmeister/urlsum.git
    cd urlsum
    ```
 
