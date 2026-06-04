@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "urlsum"
+version = "0.1.0"
+description = "AI-driven 450-character hard limit summary of the contents of a URL."
+readme = "README.md"
+requires-python = ">=3.7"
+license = {text = "MIT"}
+dependencies = [
+    "requests",
+    "crawlee[beautifulsoup]",
+]
+
+[project.scripts]
+urlsum = "urlsum:run"
