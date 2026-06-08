@@ -17,13 +17,35 @@ logging.disable(logging.CRITICAL)
 
 try:
     CONFIG_PATH = os.path.expanduser("~/.config/urlsum/config.json")
+    if CONFIG_PATH.startswith("~"):
+        # expanduser failed to expand
+        raise ValueError("Could not expand home directory")
 except Exception:
-    CONFIG_PATH = "/tmp/urlsum_config.json"
+    # Fallback to a user-specific path in the temporary directory
+    import tempfile
+    import stat
+    try:
+        # getuid() is available on Unix
+        uid = os.getuid()
+        tmp_config_dir = os.path.join(tempfile.gettempdir(), f"urlsum_{uid}")
+        try:
+            os.makedirs(tmp_config_dir, mode=0o700, exist_ok=True)
+            # Verify it's a directory and we own it to prevent symlink attacks
+            st = os.lstat(tmp_config_dir)
+            if not stat.S_ISDIR(st.st_mode) or st.st_uid != uid:
+                CONFIG_PATH = None
+            else:
+                CONFIG_PATH = os.path.join(tmp_config_dir, "config.json")
+        except Exception:
+            CONFIG_PATH = None
+    except (AttributeError, Exception):
+        # Fallback for platforms without getuid or if anything fails
+        CONFIG_PATH = None
 DEFAULT_MODEL = "gemini-2.5-flash"
 DEFAULT_LIMIT = 450
 
 def get_config():
-    if os.path.exists(CONFIG_PATH):
+    if CONFIG_PATH and os.path.exists(CONFIG_PATH):
         try:
             with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
                 return json.load(f)
@@ -32,13 +54,43 @@ def get_config():
     return {}
 
 def update_config(key, value):
+    if not CONFIG_PATH:
+        print("Warning: Configuration persistence is disabled (no secure storage found).", file=sys.stderr)
+        return
     config = get_config()
     config[key] = value
     try:
         config_dir = os.path.dirname(CONFIG_PATH)
         os.makedirs(config_dir, exist_ok=True)
-        with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=4)
+        # Security: restrict permissions of the config directory if it's our own
+        if os.path.basename(config_dir).startswith("urlsum"):
+            try:
+                os.chmod(config_dir, 0o700)
+            except Exception:
+                pass
+
+        # Create file with 0600 permissions using os.open
+        # os.open mode is affected by umask, so we follow up with os.chmod
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        if hasattr(os, 'O_NOFOLLOW'):
+            flags |= os.O_NOFOLLOW
+        
+        try:
+            fd = os.open(CONFIG_PATH, flags, 0o600)
+        except OSError as e:
+            # e.g. O_NOFOLLOW triggered because it's a symlink
+            print(f"Error: Failed to open config file securely: {e}", file=sys.stderr)
+            return
+
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=4)
+        finally:
+            # Ensure permissions are exactly 0600
+            try:
+                os.chmod(CONFIG_PATH, 0o600)
+            except Exception:
+                pass
     except Exception as e:
         print(f"Error: Failed to update config: {e}", file=sys.stderr)
         sys.exit(1)
@@ -66,6 +118,9 @@ def get_candidate_keys():
     return keys
 
 def save_api_key(key):
+    if not CONFIG_PATH:
+        print("Error: Cannot save API key because no secure configuration path is available.", file=sys.stderr)
+        return
     update_config("api_key", key)
     print(f"API key successfully saved to {CONFIG_PATH}", file=sys.stderr)
 
@@ -168,7 +223,15 @@ async def extract_webpage_text(url, verbose=False):
             print(f"Warning: Error parsing content: {e}", file=sys.stderr)
 
     try:
-        await crawler.run([Request.from_url(url, headers=headers)])
+        spinner_task = asyncio.create_task(progress_spinner())
+        try:
+            await crawler.run([Request.from_url(url, headers=headers)])
+        finally:
+            spinner_task.cancel()
+            try:
+                await spinner_task
+            except asyncio.CancelledError:
+                pass
     except SessionError as e:
         print(f"Error: Access blocked by {url} (SessionError). The site might have anti-bot protection.", file=sys.stderr)
         return "", ""
@@ -196,6 +259,23 @@ async def extract_webpage_text(url, verbose=False):
         text = text[:max_input_chars] + "..."
 
     return title, text
+
+async def progress_spinner():
+    # vertical bar, forward slash, m-dash, back slash
+    chars = ['|', '/', '\u2014', '\\']
+    i = 0
+    try:
+        # Requirement: "at the beginning of the new line"
+        sys.stderr.write("Reading the URL...\n")
+        while True:
+            sys.stderr.write(f"\r{chars[i % len(chars)]}")
+            sys.stderr.flush()
+            i += 1
+            await asyncio.sleep(0.1)
+    finally:
+        # Clear the spinner character
+        sys.stderr.write("\r \r")
+        sys.stderr.flush()
 
 def get_prompt(title, text, limit):
     return (
@@ -286,7 +366,7 @@ def get_summary(title, text, candidate_keys, model, limit):
     last_error = None
     for name, api_key in candidate_keys:
         try:
-            print(f"Trying api key {name}: {api_key}")
+            print(f"Trying api key from {name}...", file=sys.stderr)
             response = query_gemini_api(title, text, api_key, model, limit)
             
             # Check for invalid API key response status
@@ -471,7 +551,7 @@ async def main():
             description=f"AI-driven {DEFAULT_LIMIT}-character hard limit summary of the contents of a URL."
         )
         parser.add_argument("url", nargs="?", help="The URL of the webpage to summarize.")
-        parser.add_argument("--set-key", dest="set_key", help="Save your Gemini API key to the config file (must be used alone).")
+        parser.add_argument("--set-key", dest="set_key", nargs="?", const=True, help="Save your Gemini API key to the config file (must be used alone). If no key is provided, the current key is displayed.")
         parser.add_argument("--install", nargs="?", const=os.path.expanduser("~/bin"), metavar="PATH", help="Install the script to ~/bin/urlsum (or a specified alternative folder; may require sudo for system paths). Must be used alone.")
         parser.add_argument("-d", "--default", action="store_true", help="Set the default Ollama model (must be used alone).")
         parser.add_argument("-l", "--limit", type=int, default=DEFAULT_LIMIT, help=f"Summary character limit (default: {DEFAULT_LIMIT}).")
@@ -509,12 +589,17 @@ async def main():
                     break
 
         # Enforce that --set-key is used alone
-        if args.set_key:
+        if args.set_key is not None:
             # Check if --set-key was provided
             for i, arg in enumerate(sys.argv):
                 if arg == '--set-key':
                     # Check if other args are present besides --set-key and its value
-                    other_args = sys.argv[1:i] + sys.argv[i+2:]
+                    # If it took a value, it should be at i+1
+                    if isinstance(args.set_key, str) and i + 1 < len(sys.argv) and sys.argv[i+1] == args.set_key:
+                        other_args = sys.argv[1:i] + sys.argv[i+2:]
+                    else:
+                        other_args = sys.argv[1:i] + sys.argv[i+1:]
+                    
                     if other_args:
                         print("Error: The --set-key switch must be used alone on the command line and cannot be combined with any other switch.", file=sys.stderr)
                         sys.exit(1)
@@ -549,8 +634,17 @@ async def main():
         sys.exit(1)
 
     # Handle key storage
-    if args.set_key:
-        save_api_key(args.set_key)
+    if args.set_key is not None:
+        if args.set_key is True:
+            # Display current key
+            config = get_config()
+            key = config.get("api_key")
+            if key:
+                print(f"Current Gemini API key: {key}")
+            else:
+                print("No Gemini API key is currently saved.")
+        else:
+            save_api_key(args.set_key)
         return
 
     # Handle model storage

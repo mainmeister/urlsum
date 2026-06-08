@@ -56,7 +56,7 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-  --set-key SET_KEY     Save your Gemini API key to the config file (must be used alone).
+  --set-key [SET_KEY]   Save your Gemini API key to the config file (must be used alone). If no key is provided, the current key is displayed.
   --install [PATH]      Install the script to ~/bin/urlsum (or a specified alternative folder; may require sudo for system paths). Must be used alone.
   -d, --default         Set the default Ollama model (must be used alone).
   -l LIMIT, --limit LIMIT
@@ -77,6 +77,11 @@ options:
 First, set your API key:
 ```bash
 urlsum --set-key YOUR_GEMINI_API_KEY
+```
+
+To view the currently saved key:
+```bash
+urlsum --set-key
 ```
 
 Summarize a URL:
