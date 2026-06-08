@@ -1,11 +1,11 @@
 # urlsum
 
-AI-driven 450-character hard limit summary of the contents of a URL.
+AI-driven hard limit summary of the contents of a URL.
 
 ## Features
 
 - Summarizes webpages into a single, concise paragraph.
-- Enforces a strict 450-character limit with complete sentences.
+- Enforces a strict character limit with complete sentences (default: 450).
 - Supports Google Gemini API (default).
 - Supports local Ollama models.
 - Automatically copies the summary to the clipboard (supports Wayland and X11).
@@ -33,12 +33,21 @@ AI-driven 450-character hard limit summary of the contents of a URL.
    pip install requests "crawlee[beautifulsoup]"
    ```
 
-3. (Optional) Make the script executable and add it to your PATH.
+3. Install the script to your local bin directory:
+   ```bash
+   python3 urlsum.py --install
+   ```
+   Or to a custom directory:
+   ```bash
+   python3 urlsum.py --install /usr/local/bin
+   ```
+
+   > **Note:** If the destination directory requires root access (like `/usr/local/bin`), you must run the command with `sudo`.
 
 ## Usage
 
 ```bash
-usage: urlsum [-h] [--set-key SET_KEY] [-d] [-m MODEL] [-o [OLLAMA]] [-t TIMEOUT] [-v] [--no-clipboard] [url]
+usage: urlsum [-h] [--set-key SET_KEY] [--install [PATH]] [-d] [-l LIMIT] [-m MODEL] [-o] [-t TIMEOUT] [-v] [--no-clipboard] [url]
 
 AI-driven 450-character hard limit summary of the contents of a URL.
 
@@ -47,12 +56,14 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-  --set-key SET_KEY     Save your Gemini API key to the config file.
-  -d, --default         Set the default Ollama model.
+  --set-key SET_KEY     Save your Gemini API key to the config file (must be used alone).
+  --install [PATH]      Install the script to ~/bin/urlsum (or a specified alternative folder; may require sudo for system paths). Must be used alone.
+  -d, --default         Set the default Ollama model (must be used alone).
+  -l LIMIT, --limit LIMIT
+                        Summary character limit (default: 450).
   -m MODEL, --model MODEL
-                        Gemini model to use (default: gemini-2.5-flash).
-  -o [OLLAMA], --ollama [OLLAMA]
-                        Use local Ollama service instead of Gemini. Optional: model name (default: llama3).
+                        Gemini model to use (default: gemini-2.5-flash; must be used alone).
+  -o, --ollama          Use local Ollama service instead of Gemini (default model: llama3).
   -t TIMEOUT, --timeout TIMEOUT
                         Timeout for Ollama service (e.g., 300 or 5:00). Default: 600s.
   -v, --verbose         Output the scraped text in a clean human-readable form.
@@ -85,9 +96,11 @@ Summarize using Ollama:
 urlsum -o https://example.com
 ```
 
-Specify a different model for a single run:
+#### Custom Summary Limit
+
+Summarize with a custom character limit:
 ```bash
-urlsum -o llama3.2 https://example.com
+urlsum --limit 200 https://example.com
 ```
 
 ## Configuration

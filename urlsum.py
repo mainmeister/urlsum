@@ -4,6 +4,7 @@ import sys
 import time
 import json
 import re
+import shutil
 import argparse
 import requests
 import subprocess
@@ -19,6 +20,7 @@ try:
 except Exception:
     CONFIG_PATH = "/tmp/urlsum_config.json"
 DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_LIMIT = 450
 
 def get_config():
     if os.path.exists(CONFIG_PATH):
@@ -66,6 +68,44 @@ def get_candidate_keys():
 def save_api_key(key):
     update_config("api_key", key)
     print(f"API key successfully saved to {CONFIG_PATH}", file=sys.stderr)
+
+def install_script(target_dir=None):
+    if target_dir is None:
+        target_dir = os.path.expanduser("~/bin")
+    else:
+        target_dir = os.path.expanduser(target_dir)
+    
+    target_path = os.path.join(target_dir, "urlsum")
+    source_path = os.path.abspath(__file__)
+    
+    if os.path.exists(target_path):
+        try:
+            choice = input(f"File {target_path} already exists. Overwrite? [Y/n]: ").lower().strip()
+            if choice not in ('', 'y'):
+                print("Installation cancelled.", file=sys.stderr)
+                sys.exit(1)
+        except (EOFError, KeyboardInterrupt):
+            print("\nInstallation cancelled.", file=sys.stderr)
+            sys.exit(1)
+
+    try:
+        os.makedirs(target_dir, exist_ok=True)
+        shutil.copy2(source_path, target_path)
+        os.chmod(target_path, 0o755)
+        print(f"Successfully installed to {target_path}", file=sys.stderr)
+        
+        # Check if ~/bin is in PATH
+        path_env = os.environ.get("PATH", "")
+        # Expand ~ in PATH if present for comparison, though usually it's absolute
+        expanded_path_parts = [os.path.abspath(os.path.expanduser(p)) for p in path_env.split(':')]
+        if os.path.abspath(target_dir) not in expanded_path_parts:
+            print(f"Warning: {target_dir} is not in your PATH. You may need to add it to your shell profile.", file=sys.stderr)
+    except PermissionError:
+        print(f"Error: Permission denied. If installing to a system directory (like /usr/local/bin), try running with sudo.", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error during installation: {e}", file=sys.stderr)
+        sys.exit(1)
 
 async def extract_webpage_text(url, verbose=False):
     try:
@@ -157,43 +197,45 @@ async def extract_webpage_text(url, verbose=False):
 
     return title, text
 
-def get_prompt(title, text):
+def get_prompt(title, text, limit):
     return (
         "You are a helpful assistant. Summarize the following webpage content in a single concise paragraph "
         "consisting of complete, non-truncated sentences. The total length of the summary MUST be strictly "
-        "at most 450 characters long. This is a hard limit. Do not include any intro like 'Here is a summary' "
+        f"at most {limit} characters long. This is a hard limit. Do not include any intro like 'Here is a summary' "
         "or quote the text directly unless necessary. Focus on the core message and key details.\n\n"
         f"Webpage Title: {title}\n"
         f"Webpage Content: {text}"
     )
 
-def clean_and_truncate_summary(summary):
+def clean_and_truncate_summary(summary, limit):
     # Clean up any trailing/leading whitespaces or markdown code block wrapper
     summary = summary.replace("```", "").strip()
     
-    # Enforce complete sentences under the 450 character limit
+    # Enforce complete sentences under the character limit
     try:
         matches = list(re.finditer(r'[.!?]["\')\]}]*?(?=\s|$)', summary))
     except Exception:
         matches = []
-    valid_matches = [m for m in matches if m.end() <= 450]
+    valid_matches = [m for m in matches if m.end() <= limit]
     
     if valid_matches:
         summary = summary[:valid_matches[-1].end()].strip()
     else:
-        # Fallback if no complete sentence fits within 450 characters
-        truncated = summary[:447]
+        # Fallback if no complete sentence fits within the limit
+        # Truncate to limit-3 and add ellipsis
+        truncated_len = max(0, limit - 3)
+        truncated = summary[:truncated_len]
         last_space = truncated.rfind(' ')
-        if last_space > 300:
+        if last_space > (limit * 2 // 3):
             summary = truncated[:last_space].strip() + "..."
         else:
             summary = truncated.strip() + "..."
     return summary
 
-def query_gemini_api(title, text, api_key, model):
+def query_gemini_api(title, text, api_key, model, limit):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
-    prompt = get_prompt(title, text)
+    prompt = get_prompt(title, text, limit)
 
     generation_config = {
         "maxOutputTokens": 1024,
@@ -234,7 +276,7 @@ def query_gemini_api(title, text, api_key, model):
                 continue
             raise
 
-def get_summary(title, text, candidate_keys, model):
+def get_summary(title, text, candidate_keys, model, limit):
     if not candidate_keys:
         print("Error: Gemini API key not found.", file=sys.stderr)
         print("Please set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable,", file=sys.stderr)
@@ -245,7 +287,7 @@ def get_summary(title, text, candidate_keys, model):
     for name, api_key in candidate_keys:
         try:
             print(f"Trying api key {name}: {api_key}")
-            response = query_gemini_api(title, text, api_key, model)
+            response = query_gemini_api(title, text, api_key, model, limit)
             
             # Check for invalid API key response status
             if response.status_code == 400 or response.status_code == 403:
@@ -267,7 +309,7 @@ def get_summary(title, text, candidate_keys, model):
             
             try:
                 summary = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                return clean_and_truncate_summary(summary)
+                return clean_and_truncate_summary(summary, limit)
             except (KeyError, IndexError) as e:
                 print(f"Error: Failed to parse Gemini API response: {e}", file=sys.stderr)
                 print(f"API Response: {data}", file=sys.stderr)
@@ -306,6 +348,19 @@ def parse_timeout(timeout_str):
         except ValueError:
             raise ValueError(f"Invalid timeout format: {timeout_str}. Use seconds or min:sec.")
 
+def format_duration(seconds):
+    total_seconds = int(round(seconds))
+    h = total_seconds // 3600
+    m = (total_seconds % 3600) // 60
+    s = total_seconds % 60
+    
+    if h > 0:
+        return f"{h:02d}:{m:02d}:{s:02d}"
+    elif m > 0:
+        return f"{m:02d}:{s:02d}"
+    else:
+        return f"{s}"
+
 def get_ollama_models():
     url = "http://localhost:11434/api/tags"
     try:
@@ -319,9 +374,9 @@ def get_ollama_models():
         print(f"Error fetching Ollama models: {e}", file=sys.stderr)
         return []
 
-def query_ollama_api(title, text, model, timeout=600):
+def query_ollama_api(title, text, model, timeout=600, limit=DEFAULT_LIMIT):
     url = "http://localhost:11434/api/generate"
-    prompt = get_prompt(title, text)
+    prompt = get_prompt(title, text, limit)
     
     payload = {
         "model": model,
@@ -340,7 +395,7 @@ def query_ollama_api(title, text, model, timeout=600):
         raw_summary = data.get("response", "").strip()
         if not raw_summary:
             return None
-        return clean_and_truncate_summary(raw_summary)
+        return clean_and_truncate_summary(raw_summary, limit)
     except Exception as e:
         print(f"Error calling Ollama API: {e}", file=sys.stderr)
         return None
@@ -409,21 +464,86 @@ async def main():
     # Load config
     config = get_config()
     default_ollama = config.get("default_ollama_model", "llama3")
+    default_gemini = config.get("default_gemini_model", DEFAULT_MODEL)
 
     try:
         parser = argparse.ArgumentParser(
-            description="AI-driven 450-character hard limit summary of the contents of a URL."
+            description=f"AI-driven {DEFAULT_LIMIT}-character hard limit summary of the contents of a URL."
         )
         parser.add_argument("url", nargs="?", help="The URL of the webpage to summarize.")
-        parser.add_argument("--set-key", dest="set_key", help="Save your Gemini API key to the config file.")
-        parser.add_argument("-d", "--default", action="store_true", help="Set the default Ollama model.")
-        parser.add_argument("-m", "--model", default=DEFAULT_MODEL, help=f"Gemini model to use (default: {DEFAULT_MODEL}).")
-        parser.add_argument("-o", "--ollama", nargs="?", const=default_ollama, help=f"Use local Ollama service instead of Gemini. Optional: model name (default: {default_ollama}).")
+        parser.add_argument("--set-key", dest="set_key", help="Save your Gemini API key to the config file (must be used alone).")
+        parser.add_argument("--install", nargs="?", const=os.path.expanduser("~/bin"), metavar="PATH", help="Install the script to ~/bin/urlsum (or a specified alternative folder; may require sudo for system paths). Must be used alone.")
+        parser.add_argument("-d", "--default", action="store_true", help="Set the default Ollama model (must be used alone).")
+        parser.add_argument("-l", "--limit", type=int, default=DEFAULT_LIMIT, help=f"Summary character limit (default: {DEFAULT_LIMIT}).")
+        parser.add_argument("-m", "--model", default=default_gemini, help=f"Gemini model to use (default: {default_gemini}). Must be used alone.")
+        parser.add_argument("-o", "--ollama", action="store_true", help=f"Use local Ollama service instead of Gemini (default model: {default_ollama}).")
         parser.add_argument("-t", "--timeout", help="Timeout for Ollama service (e.g., 300 or 5:00). Default: 600s.")
         parser.add_argument("-v", "--verbose", action="store_true", help="Output the scraped text in a clean human-readable form.")
         parser.add_argument("--no-clipboard", action="store_true", help="Do not copy the summary to the clipboard.")
         
         args = parser.parse_args()
+        
+        # Enforce that -d/--default is used alone
+        if args.default:
+            if any(arg not in ('-d', '--default') for arg in sys.argv[1:]):
+                print("Error: The -d/--default switch must be used alone on the command line and cannot be combined with any other switch.", file=sys.stderr)
+                sys.exit(1)
+
+        # Enforce that --install is used alone
+        if args.install:
+            # Check if --install was provided (it can have an optional value)
+            # We look for --install in sys.argv
+            install_present = False
+            for i, arg in enumerate(sys.argv):
+                if arg == '--install':
+                    install_present = True
+                    # Check if other args are present besides --install and its optional value
+                    other_args = sys.argv[1:i] + sys.argv[i+1:]
+                    # If the next arg is the value of --install, it's not "another switch"
+                    if i + 1 < len(sys.argv) and sys.argv[i+1] == args.install:
+                        other_args = sys.argv[1:i] + sys.argv[i+2:]
+                    
+                    if other_args:
+                        print("Error: The --install switch must be used alone on the command line and cannot be combined with any other switch.", file=sys.stderr)
+                        sys.exit(1)
+                    break
+
+        # Enforce that --set-key is used alone
+        if args.set_key:
+            # Check if --set-key was provided
+            for i, arg in enumerate(sys.argv):
+                if arg == '--set-key':
+                    # Check if other args are present besides --set-key and its value
+                    other_args = sys.argv[1:i] + sys.argv[i+2:]
+                    if other_args:
+                        print("Error: The --set-key switch must be used alone on the command line and cannot be combined with any other switch.", file=sys.stderr)
+                        sys.exit(1)
+                    break
+                elif arg.startswith('--set-key='):
+                    # Check if other args are present besides --set-key=value
+                    other_args = sys.argv[1:i] + sys.argv[i+1:]
+                    if other_args:
+                        print("Error: The --set-key switch must be used alone on the command line and cannot be combined with any other switch.", file=sys.stderr)
+                        sys.exit(1)
+                    break
+        
+        # Enforce that -m/--model is used alone
+        model_provided = False
+        if len(sys.argv) == 3 and sys.argv[1] in ('-m', '--model'):
+            model_provided = True
+        elif len(sys.argv) == 2 and (sys.argv[1].startswith('--model=') or (sys.argv[1].startswith('-m') and len(sys.argv[1]) > 2 and not sys.argv[1].startswith('--'))):
+            model_provided = True
+        
+        # Check if model flag was provided in ANY form
+        any_model_flag = False
+        for arg in sys.argv[1:]:
+            if arg in ('-m', '--model') or arg.startswith('--model=') or (arg.startswith('-') and not arg.startswith('--') and 'm' in arg):
+                any_model_flag = True
+                break
+        
+        if any_model_flag and not model_provided:
+            print("Error: The -m/--model switch must be used alone on the command line and cannot be combined with any other switch.", file=sys.stderr)
+            sys.exit(1)
     except Exception as e:
         print(f"Error: Argument parsing failed: {e}", file=sys.stderr)
         sys.exit(1)
@@ -431,6 +551,17 @@ async def main():
     # Handle key storage
     if args.set_key:
         save_api_key(args.set_key)
+        return
+
+    # Handle model storage
+    if model_provided:
+        update_config("default_gemini_model", args.model)
+        print(f"Default Gemini model set to: {args.model}", file=sys.stderr)
+        return
+
+    # Handle install
+    if args.install:
+        install_script(args.install)
         return
 
     # Handle default Ollama model selection
@@ -466,17 +597,26 @@ async def main():
         sys.exit(1)
 
     # Fetch and extract content
+    t0 = time.perf_counter()
     try:
         title, text = await extract_webpage_text(args.url, verbose=args.verbose)
     except Exception as e:
         print(f"Error: Unexpected failure during text extraction: {e}", file=sys.stderr)
         sys.exit(1)
 
+    t1 = time.perf_counter()
+
     if args.verbose:
         header = f"--- SCRAPED TEXT: {title} ---"
         footer = "-" * (len(title) + 22)
         verbose_output = f"{header}\n{text}\n{footer}\n"
+        t_pager_start = time.perf_counter()
         pydoc.pager(verbose_output)
+        t_pager_end = time.perf_counter()
+        # Exclude pager time from total and parsing duration
+        pager_duration = t_pager_end - t_pager_start
+        t0 += pager_duration
+        t1 += pager_duration
 
     if not text:
         print("Error: Could not extract any readable text from the webpage.", file=sys.stderr)
@@ -484,7 +624,8 @@ async def main():
 
     # Get summary
     summary = None
-    if args.ollama is not None:
+    t2 = time.perf_counter()
+    if args.ollama:
         try:
             # Parse timeout
             try:
@@ -494,9 +635,9 @@ async def main():
                 sys.exit(1)
 
             # Display countdown while waiting for Ollama
-            timer_task = asyncio.create_task(countdown_timer(timeout_seconds, args.ollama))
+            timer_task = asyncio.create_task(countdown_timer(timeout_seconds, default_ollama))
             try:
-                summary = await asyncio.to_thread(query_ollama_api, title, text, args.ollama, timeout_seconds)
+                summary = await asyncio.to_thread(query_ollama_api, title, text, default_ollama, timeout_seconds, args.limit)
             finally:
                 timer_task.cancel()
                 try:
@@ -519,10 +660,11 @@ async def main():
 
         # Get summary via Gemini
         try:
-            summary = get_summary(title, text, candidate_keys, args.model)
+            summary = get_summary(title, text, candidate_keys, args.model, args.limit)
         except Exception as e:
             print(f"Error: Failed to generate summary: {e}", file=sys.stderr)
             sys.exit(1)
+    t3 = time.perf_counter()
     
     if summary:
         # Output to stdout
@@ -537,6 +679,12 @@ async def main():
                 copy_to_clipboard(summary)
             except Exception as e:
                 print(f"Warning: Failed to copy to clipboard: {e}", file=sys.stderr)
+
+        # Display timings
+        parsing_time = t1 - t0
+        model_time = t3 - t2
+        total_time = time.perf_counter() - t0
+        print(f"\nTimings: Parsing: {format_duration(parsing_time)} | Model: {format_duration(model_time)} | Total: {format_duration(total_time)}", file=sys.stderr)
 
 def run():
     try:
