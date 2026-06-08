@@ -68,6 +68,18 @@ options:
                         Timeout for Ollama service (e.g., 300 or 5:00). Default: 600s.
   -v, --verbose         Output the scraped text in a clean human-readable form.
   --no-clipboard        Do not copy the summary to the clipboard.
+
+security considerations:
+  Potential for Server-Side Request Forgery (SSRF): The script fetches content from any URL provided via the command line. 
+  While standard for a CLI tool, if integrated into an automated environment, it could be used to probe internal network 
+  resources or cloud metadata endpoints.
+
+  Unrestricted Installation Path: The --install flag allows specifying any arbitrary directory. If run with elevated 
+  privileges (e.g., via sudo), an incorrect or malicious path could result in overwriting critical system files.
+
+  Information Leakage in Verbose Mode: The --verbose flag prints the entire scraped text. If a URL contains sensitive 
+  or private data, this information is displayed in the terminal and potentially stored in pager temporary files or 
+  terminal buffers.
 ```
 
 ### Examples
@@ -111,6 +123,12 @@ urlsum --limit 200 https://example.com
 ## Configuration
 
 Settings are stored in `~/.config/urlsum/config.json`.
+
+## Security Considerations
+
+- **Potential for Server-Side Request Forgery (SSRF):** The script fetches content from any URL provided via the command line. While standard for a CLI tool, if integrated into an automated environment, it could be used to probe internal network resources or cloud metadata endpoints.
+- **Unrestricted Installation Path:** The `--install` flag allows specifying any arbitrary directory. If run with elevated privileges (e.g., via `sudo`), an incorrect or malicious path could result in overwriting critical system files.
+- **Information Leakage in Verbose Mode:** The `--verbose` flag prints the entire scraped text. If a URL contains sensitive or private data, this information is displayed in the terminal and potentially stored in pager temporary files or terminal buffers.
 
 ## License
 

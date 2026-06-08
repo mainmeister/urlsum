@@ -561,7 +561,21 @@ async def main():
 
     try:
         parser = argparse.ArgumentParser(
-            description=f"AI-driven {DEFAULT_LIMIT}-character hard limit summary of the contents of a URL."
+            description=f"AI-driven {DEFAULT_LIMIT}-character hard limit summary of the contents of a URL.",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog="""
+security considerations:
+  Potential for Server-Side Request Forgery (SSRF): The script fetches content from any URL provided via the command line. 
+  While standard for a CLI tool, if integrated into an automated environment, it could be used to probe internal network 
+  resources or cloud metadata endpoints.
+
+  Unrestricted Installation Path: The --install flag allows specifying any arbitrary directory. If run with elevated 
+  privileges (e.g., via sudo), an incorrect or malicious path could result in overwriting critical system files.
+
+  Information Leakage in Verbose Mode: The --verbose flag prints the entire scraped text. If a URL contains sensitive 
+  or private data, this information is displayed in the terminal and potentially stored in pager temporary files or 
+  terminal buffers.
+"""
         )
         parser.add_argument("url", nargs="?", help="The URL of the webpage to summarize.")
         parser.add_argument("--set-key", dest="set_key", nargs="?", const=True, help="Save your Gemini API key to the config file (must be used alone). If no key is provided, the current key is displayed.")
