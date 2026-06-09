@@ -1,2 +1,3 @@
 requests
 crawlee[beautifulsoup]
+lxml

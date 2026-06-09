@@ -18,6 +18,7 @@ AI-driven hard limit summary of the contents of a URL.
 - Python 3.x
 - `requests`
 - `crawlee[beautifulsoup]`
+- `lxml`
 - (Optional) `wl-copy`, `xclip`, or `xsel` for clipboard support.
 
 ### Setup
@@ -30,7 +31,7 @@ AI-driven hard limit summary of the contents of a URL.
 
 2. Install dependencies:
    ```bash
-   pip install requests "crawlee[beautifulsoup]"
+   pip install requests "crawlee[beautifulsoup]" lxml
    ```
 
 3. Install the script to your local bin directory:

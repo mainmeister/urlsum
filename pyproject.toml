@@ -12,6 +12,7 @@ license = {text = "MIT"}
 dependencies = [
     "requests",
     "crawlee[beautifulsoup]",
+    "lxml",
 ]
 
 [project.scripts]

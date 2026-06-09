@@ -164,9 +164,10 @@ def install_script(target_dir=None):
 
 async def extract_webpage_text(url, verbose=False):
     try:
-        import os
-        # Set environment variable for crawlee
+        from datetime import timedelta
+        # Set environment variables for crawlee performance
         os.environ.setdefault('CRAWLEE_LOG_LEVEL', 'CRITICAL')
+        os.environ.setdefault('CRAWLEE_PURGE_ON_START', '0')
     except Exception:
         pass
 
@@ -177,13 +178,14 @@ async def extract_webpage_text(url, verbose=False):
         from crawlee.errors import SessionError
     except ImportError:
         print("Error: 'crawlee' library is missing. Install with 'pip install crawlee[beautifulsoup]'", file=sys.stderr)
-        return "", ""
+        return "", "", 0.0
     except Exception as e:
         print(f"Error: Failed to import crawlee components: {e}", file=sys.stderr)
-        return "", ""
+        return "", "", 0.0
 
     title = ""
     text = ""
+    crawlee_time = 0.0
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -192,13 +194,15 @@ async def extract_webpage_text(url, verbose=False):
     try:
         crawler = BeautifulSoupCrawler(
             storage_client=MemoryStorageClient(),
-            max_request_retries=1,
-            max_session_rotations=1,
+            max_request_retries=0,
+            max_requests_per_crawl=1,
+            use_session_pool=False,
+            navigation_timeout=timedelta(seconds=20),
             configure_logging=False
         )
     except Exception as e:
         print(f"Error: Failed to initialize crawler: {e}", file=sys.stderr)
-        return "", ""
+        return "", "", 0.0
 
     @crawler.router.default_handler
     async def request_handler(context: BeautifulSoupCrawlingContext) -> None:
@@ -225,7 +229,9 @@ async def extract_webpage_text(url, verbose=False):
     try:
         spinner_task = asyncio.create_task(progress_spinner())
         try:
-            await crawler.run([Request.from_url(url, headers=headers)])
+            t_start = time.perf_counter()
+            await crawler.run([Request.from_url(url, headers=headers)], purge_request_queue=False)
+            crawlee_time = time.perf_counter() - t_start
         finally:
             spinner_task.cancel()
             try:
@@ -234,10 +240,10 @@ async def extract_webpage_text(url, verbose=False):
                 pass
     except SessionError as e:
         print(f"Error: Access blocked by {url} (SessionError). The site might have anti-bot protection.", file=sys.stderr)
-        return "", ""
+        return "", "", 0.0
     except Exception as e:
         print(f"Error: Failed to fetch URL {url} with crawlee: {e}", file=sys.stderr)
-        return "", ""
+        return "", "", 0.0
 
     # Clean up whitespace
     try:
@@ -258,7 +264,7 @@ async def extract_webpage_text(url, verbose=False):
     if len(text) > max_input_chars:
         text = text[:max_input_chars] + "..."
 
-    return title, text
+    return title, text, crawlee_time
 
 async def progress_spinner():
     # vertical bar, forward slash, m-dash, back slash
@@ -719,8 +725,9 @@ security considerations:
 
     # Fetch and extract content
     t0 = time.perf_counter()
+    crawlee_time = 0.0
     try:
-        title, text = await extract_webpage_text(args.url, verbose=args.verbose)
+        title, text, crawlee_time = await extract_webpage_text(args.url, verbose=args.verbose)
     except Exception as e:
         print(f"Error: Unexpected failure during text extraction: {e}", file=sys.stderr)
         sys.exit(1)
@@ -802,10 +809,10 @@ security considerations:
                 print(f"Warning: Failed to copy to clipboard: {e}", file=sys.stderr)
 
         # Display timings
-        parsing_time = t1 - t0
+        extraction_time = t1 - t0
         model_time = t3 - t2
         total_time = time.perf_counter() - t0
-        print(f"\nTimings: Parsing: {format_duration(parsing_time)} | Model: {format_duration(model_time)} | Total: {format_duration(total_time)}", file=sys.stderr)
+        print(f"\nTimings: Crawlee: {format_duration(crawlee_time)} | Extraction: {format_duration(extraction_time)} | Model: {format_duration(model_time)} | Total: {format_duration(total_time)}", file=sys.stderr)
 
 def run():
     try:
