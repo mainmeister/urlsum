@@ -53,7 +53,7 @@ def get_config():
             print(f"Warning: Failed to read config file: {e}", file=sys.stderr)
     return {}
 
-def update_config(key, value):
+def update_config(key, value) -> None:
     if not CONFIG_PATH:
         print("Warning: Configuration persistence is disabled (no secure storage found).", file=sys.stderr)
         return
@@ -117,14 +117,14 @@ def get_candidate_keys():
             
     return keys
 
-def save_api_key(key):
+def save_api_key(key) -> None:
     if not CONFIG_PATH:
         print("Error: Cannot save API key because no secure configuration path is available.", file=sys.stderr)
         return
     update_config("api_key", key)
     print(f"API key successfully saved to {CONFIG_PATH}", file=sys.stderr)
 
-def install_script(target_dir=None):
+def install_script(target_dir=None) -> None:
     if target_dir is None:
         target_dir = os.path.expanduser("~/bin")
     else:
@@ -162,7 +162,7 @@ def install_script(target_dir=None):
         print(f"Error during installation: {e}", file=sys.stderr)
         sys.exit(1)
 
-async def extract_webpage_text(url, verbose=False):
+async def extract_webpage_text(url, verbose: bool=False):
     try:
         from datetime import timedelta
         # Set environment variables for crawlee performance
@@ -266,7 +266,7 @@ async def extract_webpage_text(url, verbose=False):
 
     return title, text, crawlee_time
 
-async def progress_spinner():
+async def progress_spinner() -> None:
     # vertical bar, forward slash, m-dash, back slash
     chars = ['|', '/', '\u2014', '\\']
     i = 0
@@ -283,7 +283,7 @@ async def progress_spinner():
         sys.stderr.write("\r \r")
         sys.stderr.flush()
 
-def get_prompt(title, text, limit):
+def get_prompt(title, text: str, limit: int) -> str:
     # Sanitize inputs by removing potential breakout tags
     title = title.replace("</untrusted_webpage_content>", "")
     text = text.replace("</untrusted_webpage_content>", "")
@@ -302,7 +302,7 @@ def get_prompt(title, text, limit):
         "</untrusted_webpage_content>"
     )
 
-def clean_and_truncate_summary(summary, limit):
+def clean_and_truncate_summary(summary, limit: int):
     # Clean up any trailing/leading whitespaces or markdown code block wrapper
     summary = summary.replace("```", "").strip()
     
@@ -327,7 +327,7 @@ def clean_and_truncate_summary(summary, limit):
             summary = truncated.strip() + "..."
     return summary
 
-def query_gemini_api(title, text, api_key, model, limit):
+def query_gemini_api(title, text: str, api_key: str, model, limit: int):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     headers = {
         "x-goog-api-key": api_key,
@@ -375,7 +375,7 @@ def query_gemini_api(title, text, api_key, model, limit):
                 continue
             raise
 
-def get_summary(title, text, candidate_keys, model, limit):
+def get_summary(title, text: str, candidate_keys, model, limit: int):
     if not candidate_keys:
         print("Error: Gemini API key not found.", file=sys.stderr)
         print("Please set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable,", file=sys.stderr)
@@ -447,7 +447,7 @@ def parse_timeout(timeout_str):
         except ValueError:
             raise ValueError(f"Invalid timeout format: {timeout_str}. Use seconds or min:sec.")
 
-def format_duration(seconds):
+def format_duration(seconds) -> str:
     total_seconds = int(round(seconds))
     h = total_seconds // 3600
     m = (total_seconds % 3600) // 60
@@ -473,7 +473,7 @@ def get_ollama_models():
         print(f"Error fetching Ollama models: {e}", file=sys.stderr)
         return []
 
-def query_ollama_api(title, text, model, timeout=600, limit=DEFAULT_LIMIT):
+def query_ollama_api(title, text: str, model, timeout: int=600, limit: int=DEFAULT_LIMIT):
     url = "http://localhost:11434/api/generate"
     prompt = get_prompt(title, text, limit)
     
@@ -499,7 +499,7 @@ def query_ollama_api(title, text, model, timeout=600, limit=DEFAULT_LIMIT):
         print(f"Error calling Ollama API: {e}", file=sys.stderr)
         return None
 
-async def countdown_timer(duration_seconds, model):
+async def countdown_timer(duration_seconds, model) -> None:
     try:
         for i in range(duration_seconds, 0, -1):
             mins, secs = divmod(i, 60)
@@ -509,7 +509,7 @@ async def countdown_timer(duration_seconds, model):
         # Clear the line when cancelled or finished
         print("\r" + " " * 100 + "\r", end="", flush=True, file=sys.stderr)
 
-def copy_to_clipboard(text):
+def copy_to_clipboard(text: str) -> bool:
     try:
         # Encode text as UTF-8 bytes to prevent UnicodeEncodeError in non-UTF-8 locales
         text_bytes = text.encode('utf-8')
@@ -553,7 +553,7 @@ def copy_to_clipboard(text):
 
     return False
 
-async def main():
+async def main() -> None:
     # Force UTF-8 encoding for stdout and stderr to prevent encoding errors in non-UTF-8 locales
     if hasattr(sys.stdout, 'reconfigure'):
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -814,7 +814,7 @@ security considerations:
         total_time = time.perf_counter() - t0
         print(f"\nTimings: Crawlee: {format_duration(crawlee_time)} | Extraction: {format_duration(extraction_time)} | Model: {format_duration(model_time)} | Total: {format_duration(total_time)}", file=sys.stderr)
 
-def run():
+def run() -> None:
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
